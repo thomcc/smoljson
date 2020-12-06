@@ -3,7 +3,11 @@ name = "smoljson"
 version = "0.1.0"
 authors = ["Thom Chiovoloni <chiovolonit@gmail.com>"]
 edition = "2018"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
+license = "Apache-2.0 OR MIT OR Zlib"
+readme = "README.md"
+description = "Minimal"
+keywords = ["json", "serialization", "deserialization", "parsing"]
+categories = ["encoding", "no-std"]
+repository = "https://github.com/thomcc/smoljson"
+documentation = "https://docs.rs/smoljson"
+homepage = "https://github.com/thomcc/smoljson"

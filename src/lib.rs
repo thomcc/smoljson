@@ -2,13 +2,19 @@
 //! qualities (ergonomics, performance, ...) in favor of small code size and
 //! fast compiles.
 //!
-//! It's slower than both `serde_json`, and `json`, but builds faster. It
-//! doesn't support serde, or any other custom derive.
+//! It doesn't support serde, or any other custom derive. I'm not particularly
+//! happy with the API, and will likely change it to be better in the future. As
+//! a result, docs are somewhat sparse.
 //!
-//! I'm not particularly happy with the API, and will likely change it to be
-//! better in the future. As a result, docs are somewhat sparse.
+//! ## Basic Usage
+//! ```
+//! use smoljson::Value;
+//! let v = Value::from_str(r#"{"foo": [1, 2, {"bar": 3}]}"#).unwrap();
+//! let expected = smoljson::json!({"foo": [1, 2, {"bar": 3}]});
+//! assert_eq!(v, expected);
+//! ```
 //!
-//! ### Intended use case
+//! ## Intended use case
 //!
 //! The intended use case is situtions where small number of low maintenance
 //! (rare changes to struct layout) data structures need (de)serialization in a
@@ -32,7 +38,8 @@ macro_rules! opt_extract {
     };
 }
 
-// For cases where
+// `?` expansion currently harms both compile time (lots of llvm instrs
+// generated) and runtime :(
 macro_rules! tri {
     ($e:expr) => {
         match $e {
@@ -50,4 +57,4 @@ pub mod write;
 pub use read::{Error, Reader};
 pub use value::Value;
 
-pub type OwnedValue = Value<'static>;
+pub type ValOwn = Value<'static>;
