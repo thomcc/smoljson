@@ -21,6 +21,100 @@ pub(crate) enum Token<'s> {
     ArrayEnd,
 }
 
+/// A set of flags describing non-standard extensions to JSON.
+///
+/// Currently, this is just comments, but trailing commas may be added in the
+/// future.
+///
+/// Note: turning one of these flags on should never cause documents which were
+/// valid with that flag off to become invalid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Dialect {
+    /// Allow JavaScript-style comments.
+    ///
+    /// That is, if this is true, it ignores the text between single line
+    /// comments like `// foo`, and block comments like `/* bar */`.
+    ///
+    /// Note that unlike Rust's block comments, JavaScript's (and, by extension,
+    /// `Dialect::CJSON`'s), cannot be nested. E.g. `/* /* this */ */` is
+    /// invalid.
+    pub allow_comments: bool,
+    // /// Allow a single extra trailing comma in array and object literals.
+    // pub allow_trailing_comma: bool,
+}
+
+impl Default for Dialect {
+    #[inline]
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl Dialect {
+    /// Fully standard JSON (no extensions).
+    pub const STRICT: Self = Self {
+        allow_comments: false,
+        // allow_trailing_comma: false,
+    };
+
+    /// "JSON with Comments", as understood by Visual Studio Code.
+    ///
+    /// This is standard/strict JSON, but with support for JavaScript's comment
+    /// syntax.
+    ///
+    /// See <https://github.com/microsoft/node-jsonc-parser> for more details.
+    pub const CJSON: Self = Self {
+        allow_comments: false,
+        // allow_trailing_comma: false,
+    };
+
+    /// The default settings.
+    ///
+    /// This is used with the plain `Reader::new`, when using
+    /// `s.parse::<Value>()` (or `Value::from_str`), etc. It can be controlled
+    /// by cargo features.
+    ///
+    /// The settings here can be controlled by cargo features.
+    ///
+    /// - `features = ["default_allow_comments"]`: enables
+    ///   [`Dialect::allow_comments`] by default.
+    // /// - `default_allow_trailing_comma`: enables
+    // ///   [`Dialect::allow_trailing_comma`] by default.
+    pub const DEFAULT: Self = Self {
+        allow_comments: cfg!(feature = "default_allow_comments"),
+        // allow_trailing_comma: cfg!(feature = "default_allow_trailing_comma"),
+    };
+
+    /// All extensions enabled.
+    ///
+    /// When new options are added, this constant will be updated to have them
+    /// set to true.
+    ///
+    /// Use of this is not always the best idea, as there's no telling what kind
+    /// of terrible extension the fool who maintains this crate decides to add
+    /// in the future...
+    ///
+    /// (That said, the dialect flags are intended to be strictly additive
+    /// — they should never cause documents that parsed without the flag to fail
+    /// to parse with it, so using this shouldn't cause your code to
+    /// unexpectedly break)
+    pub const LOOSE: Self = Self {
+        allow_comments: true,
+        // allow_trailing_comma: true,
+    };
+    #[inline]
+    pub const fn comments(mut self, v: bool) -> Self {
+        self.allow_comments = v;
+        self
+    }
+    // #[inline]
+    // pub const fn trailing_comma(mut self, v: bool) -> Self {
+    //     self.allow_trailing_comma = v;
+    //     self
+    // }
+}
+
 // impl<'p> Token<'p> {
 //     pub fn get_bool(&self) -> Option<bool> {
 //         match self {
@@ -86,18 +180,41 @@ pub struct Reader<'a> {
     pos: usize,
     buf: String,
     stash: Option<Token<'a>>,
+    dialect: Dialect,
 }
 
 impl<'a> Reader<'a> {
+    /// Create a reader which uses the [default `Dialect`](Dialect::DEFAULT).
     pub fn new(input: &'a str) -> Self {
+        Self::with_dialect(input, Dialect::DEFAULT)
+    }
+
+    /// Create a reader with a specific dialect.
+    pub fn with_dialect(input: &'a str, dialect: Dialect) -> Self {
         Self {
-            input: input,
+            input,
             bytes: input.as_bytes(),
             pos: 0,
-            buf: "".into(),
+            buf: String::new(),
             tok_start: 0,
             stash: None,
+            dialect,
         }
+    }
+
+    #[inline]
+    pub fn dialect_mut(&mut self) -> &mut Dialect {
+        &mut self.dialect
+    }
+
+    #[inline]
+    pub fn dialect(self) -> Dialect {
+        self.dialect
+    }
+
+    #[inline]
+    pub fn position(&self) -> usize {
+        self.pos.min(self.bytes.len())
     }
 
     #[cold]
@@ -125,6 +242,25 @@ impl<'a> Reader<'a> {
         #[cfg(not(any(debug_assertions, feature = "better_errors")))]
         {
             Error { _priv: () }
+        }
+    }
+
+    /// Returns `Err` if there are any more non-whitespace/non-comment (if this
+    /// reader's dialect allows comments) characters in the input.
+    pub fn finish(mut self) -> Result<()> {
+        match self.next_token() {
+            Ok(Some(_)) => Err(self.err()),
+            Ok(None) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn bnext_if(&mut self, b: u8) -> bool {
+        if self.pos < self.bytes.len() && self.bytes[self.pos] == b {
+            self.pos += 1;
+            true
+        } else {
+            false
         }
     }
 
@@ -176,13 +312,51 @@ impl<'a> Reader<'a> {
     pub(super) fn take_stash(&mut self) -> Option<Token<'a>> {
         self.stash.take()
     }
-    pub(super) fn skipnpeek(&mut self) -> Option<u8> {
+
+    pub(super) fn skipnpeek(&mut self) -> Result<Option<u8>> {
         debug_assert!(self.stash.is_none());
-        self.skip_ws();
-        self.bpeek()
+        self.skip_trivial()?;
+        Ok(self.bpeek())
     }
 
-    fn skip_ws(&mut self) {
+    fn skip_trivial(&mut self) -> Result<()> {
+        loop {
+            self.skip_ws_only();
+            if !self.dialect.allow_comments || !self.bnext_if(b'/') {
+                return Ok(());
+            }
+            match self.bnext() {
+                Some(b'*') => tri!(self.skip_block_comment()),
+                Some(b'/') => self.skip_line_comment(),
+                _ => return Err(self.err()),
+            }
+        }
+    }
+
+    fn skip_line_comment(&mut self) {
+        let (mut p, bs) = (self.pos, self.bytes);
+        while p < bs.len() && bs[p] != b'\n' {
+            p += 1;
+        }
+        self.pos = p;
+    }
+
+    fn skip_block_comment(&mut self) -> Result<()> {
+        let (mut p, bs) = (self.pos, self.bytes);
+        loop {
+            if p + 1 >= bs.len() {
+                self.pos = p;
+                return Err(self.err());
+            }
+            if bs[p] == b'*' && bs[p + 1] == b'/' {
+                self.pos = p + 2;
+                return Ok(());
+            }
+            p += 1;
+        }
+    }
+
+    fn skip_ws_only(&mut self) {
         let (mut p, bs) = (self.pos, self.bytes);
         while p < bs.len() && matches!(bs[p], b'\n' | b' ' | b'\t' | b'\r') {
             p += 1;
@@ -295,7 +469,7 @@ impl<'a> Reader<'a> {
         if let Some(t) = self.stash.take() {
             return Ok(Some(t));
         }
-        self.skip_ws();
+        self.skip_trivial()?;
         if self.pos >= self.input.len() {
             return Ok(None);
         }
@@ -318,7 +492,11 @@ impl<'a> Reader<'a> {
     }
 
     fn is_delim_byte(&self, b: u8) -> bool {
-        matches!(b, b',' | b'}' | b']' | b' ' | b'\t' | b'\n' | b'\r')
+        match b {
+            b',' | b'}' | b']' | b' ' | b'\t' | b'\n' | b'\r' => true,
+            b'/' if self.dialect.allow_comments => true,
+            _ => false,
+        }
     }
 
     fn read_num(&mut self) -> Result<Token<'a>> {

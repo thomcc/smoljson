@@ -19,6 +19,21 @@
 //! The intended use case is situtions where small number of low maintenance
 //! (rare changes to struct layout) data structures need (de)serialization in a
 //! project where keeping a low compile time is important.
+//!
+//! ## JSON with Comments (CJSON) support
+//!
+//! By default, strictly correct JSON is required, and this does not allow
+//! comments. However this crate supports "JSON with Comments", aka `cjson`.
+//! This is a non-standard extension to JSON that allows JavaScript-style
+//! comments. It's somewhat common now, and is supported by things like VSCode
+//! (and as described by the
+//! [`jsonc-parser`](https://github.com/microsoft/node-jsonc-parser) NPM
+//! package).
+//!
+//! This is generally enabled on a per-use case using the [`Dialect`], but the
+//! default settings can be controlled using some cargo features. See
+//! [`Dialect::DEFAULT`]'s documentation for details.
+
 #![no_std]
 #![allow(dead_code)]
 
@@ -54,7 +69,7 @@ mod mac;
 pub mod read;
 pub mod value;
 pub mod write;
-pub use read::{Error, Reader};
+pub use read::{Dialect, Error, Reader};
 pub use value::Value;
 
 pub type ValOwn = Value<'static>;

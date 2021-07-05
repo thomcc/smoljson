@@ -15,3 +15,9 @@ let v = Value::from_str(r#"{"foo": [1, 2, {"bar": 3}]}"#).unwrap();
 let expected = smoljson::json!({"foo": [1, 2, {"bar": 3}]});
 assert_eq!(v, expected);
 ```
+
+## JSON with Comments (CJSON) support
+
+By default, strictly correct JSON is required, which excludes comments. However, the crate and parsers can be configured to support parsing JSON that contains JavaScript-style comments (AKA CJSON).
+
+See the documentation for more info.

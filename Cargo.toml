@@ -6,8 +6,12 @@ edition = "2018"
 license = "Apache-2.0 OR MIT OR Zlib"
 readme = "README.md"
 description = "Minimal"
-keywords = ["json", "serialization", "deserialization", "parsing"]
+keywords = ["json", "serialization", "deserialization", "parsing", "cjson"]
 categories = ["encoding", "no-std"]
 repository = "https://github.com/thomcc/smoljson"
 documentation = "https://docs.rs/smoljson"
 homepage = "https://github.com/thomcc/smoljson"
+
+[features]
+default_allow_comments = []
+# default_allow_trailing_comma = []
