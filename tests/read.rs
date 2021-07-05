@@ -1,4 +1,5 @@
-use smoljson::{Reader, Value};
+use smoljson::{json, *};
+
 const TESTJSON: &str = r#"{
     "foo": 3,
     "a": "12345 test 123",
@@ -210,4 +211,140 @@ fn test_escape_surrogates2() {
     //         (&json, lo, hi, expect, &val, &utf8)
     //     )
     // }
+}
+
+const DIALECTS: &[Dialect] = &[
+    Dialect::STRICT,
+    Dialect::STRICT.comments(true),
+    // Dialect::STRICT.trailing_comma(true),
+    // Dialect::STRICT.comments(true).trailing_comma(true),
+];
+
+#[track_caller]
+fn check_valid(s: &str, want: impl Into<Option<ValOwn>>, d: Dialect) {
+    let want = want.into();
+    let parse_res = Value::from_str_with(s, d);
+    let parsed = match parse_res {
+        Ok(got) => got,
+        Err(e) => panic!(
+            "Should be valid: {:?}. Wanted `{:?}`. Error: {:?}. Dialect {:?}",
+            s, want, e, d
+        ),
+    };
+    if let Some(want) = want {
+        assert_eq!(
+            parsed, want,
+            "Got unexpected value from {:?}. (under {:?})",
+            s, d
+        );
+    }
+}
+
+#[track_caller]
+fn check_invalid(s: &str, d: impl Into<Option<Dialect>>) {
+    let d: Option<Dialect> = d.into();
+    let parse_res = Value::from_str_with(s, d.unwrap_or(Dialect::STRICT));
+    if let Ok(got) = parse_res {
+        panic!("Should be invalid: {:?}, got `{:?}` under {:?}", s, got, d);
+    }
+}
+
+#[track_caller]
+fn all(s: &str, want: impl Into<Option<ValOwn>>) {
+    let want = want.into();
+    let inps = &[
+        s.to_string(),
+        format!("  {}", s),
+        format!("{}  ", s),
+        format!("  {}  ", s),
+    ];
+    for s in inps {
+        for &d in DIALECTS {
+            check_valid(s, want.clone(), d);
+        }
+    }
+}
+
+#[track_caller]
+fn none(s: &str) {
+    for &d in DIALECTS {
+        check_invalid(s, d);
+    }
+}
+
+#[track_caller]
+fn need_comments(s: &str, want: impl Into<Option<ValOwn>> + Clone) {
+    let want = want.into();
+    for &d in DIALECTS {
+        if d.allow_comments {
+            check_valid(s, want.clone(), d);
+        } else {
+            check_invalid(s, d);
+        }
+    }
+}
+
+#[test]
+fn test_focused() {
+    all("true", json!(true));
+    all("false", json!(false));
+    all("null", json!(null));
+    all(r#""foo""#, json!("foo"));
+    all(
+        r#""\" \\ / \b \f \n \r \t""#,
+        json!("\" \\ / \x08 \x0c \n \r \t"),
+    );
+    all(r#""\u00DC""#, json!(r"Ü"));
+    all(r#"9"#, json!(9));
+    all(r#"-9"#, json!(-9));
+    all(r#"0.125"#, json!(0.125));
+    all(r#"2e3"#, json!(2e3));
+    all(r#"2e+3"#, json!(2e+3));
+    all(r#"2e-3"#, json!(2e-3));
+    all(r#"2.5e3"#, json!(2.5e3));
+    all(r#"2.5E+3"#, json!(2.5e+3));
+    all(r#"2.5E-3"#, json!(2.5e-3));
+    all("{}", json!({}));
+    all("[]", json!([]));
+    none("1 2");
+    none("1, 2");
+    none("1/**/2");
+
+    need_comments("/**/5", json!(5));
+    need_comments("5/**/", json!(5));
+    need_comments("5//", json!(5));
+    need_comments("//\n5", json!(5));
+    all("[ [],  [ [] ]]", json!([[], [[]]]));
+    all(r#"{ "foo": true }"#, json!({ "foo": true }));
+    all(
+        r#"{ "foo": true, "": 123 }"#,
+        json!({ "foo": true, "": 123 }),
+    );
+    all(
+        r#"{ "mado": "homu", "kyubey": false }"#,
+        json!({ "mado": "homu", "kyubey": false }),
+    );
+    all(
+        r#"{ "comments": ["/*", "*/", "//"] }"#,
+        json!({ "comments": ["/*", "*/", "//"] }),
+    );
+    need_comments(r#"{ "test": /*hello*/true }"#, json!({ "test": true }));
+    need_comments(
+        r#"/**/{ "test": // what?
+true }/**/"#,
+        json!({ "test": true }),
+    );
+    need_comments(
+        r#"{ "test": //
+true }"#,
+        json!({ "test": true }),
+    );
+    need_comments("[5/* // */, 6]", json!([5, 6]));
+    need_comments("[5//,\n,6]", json!([5, 6]));
+    need_comments("[5/*, 7*/,6]", json!([5, 6]));
+    need_comments("[/*[]*/]", json!([]));
+    need_comments("[//]\n]", json!([]));
+
+    none("tr/**/ue");
+    none("tr/*/ue");
 }

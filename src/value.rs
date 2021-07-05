@@ -174,8 +174,14 @@ impl<'a, S: Into<Cow<'a, str>>> core::iter::FromIterator<(S, Value<'a>)> for Val
 
 impl<'a> Value<'a> {
     pub fn from_str(s: &'a str) -> Result<Self> {
-        let mut de = Reader::new(s);
-        Self::from_reader(&mut de)
+        Self::from_str_with(s, Dialect::DEFAULT)
+    }
+
+    pub fn from_str_with(input: &'a str, d: Dialect) -> Result<Self> {
+        let mut de = Reader::with_dialect(input, d);
+        let r = tri!(Self::from_reader(&mut de));
+        tri!(de.finish());
+        Ok(r)
     }
 
     pub fn into_static(self) -> Value<'static> {
@@ -215,7 +221,7 @@ impl<'a> Value<'a> {
     }
     fn do_read_array(de: &mut Reader<'a>) -> Result<Self> {
         let mut v = alloc::vec![];
-        if de.skipnpeek() == Some(b']') {
+        if tri!(de.skipnpeek()) == Some(b']') {
             assert!(matches!(de.next_token(), Ok(Some(Token::ArrayEnd))));
             return Ok(Self::Array(v));
         }
@@ -229,7 +235,7 @@ impl<'a> Value<'a> {
     }
     fn do_read_obj(de: &mut Reader<'a>) -> Result<Self> {
         let mut obj = BTreeMap::new();
-        if de.skipnpeek() == Some(b'}') {
+        if tri!(de.skipnpeek()) == Some(b'}') {
             assert!(matches!(de.next_token(), Ok(Some(Token::ObjectEnd))));
             return Ok(Self::Object(obj));
         }
